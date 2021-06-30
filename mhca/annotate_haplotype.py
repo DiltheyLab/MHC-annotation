@@ -92,11 +92,8 @@ def main(arguments):
     cwd = os.getcwd()
 
 
-    #hallo = importlib.resources.open_text(data, 'genes_pseudogenes.tsv')
-    hallo = resources.open_text(mhca.data, 'genes_pseudogenes.tsv')
-    #print(hallo)
-    sys.exit()
-
+    gene_type_lst = resources.open_text(mhca.data, 'genes_pseudogenes.tsv')
+    gene_type = {}
     for line in gene_type_lst: 
         name, gtype = line.rstrip().split(",")
         gene_type[name] = gtype
