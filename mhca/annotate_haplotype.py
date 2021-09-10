@@ -8,12 +8,12 @@ import matplotlib.pyplot as plt
 import subprocess
 import re
 from importlib import resources
-import mhca.data
+#import mhca.data
 
 def write_header(fileh):
     fileh.write("##gff-version 3\n")
 
-def parse_cigar(cigar, strand, imgtseq, offset):
+def parse_cigar(cigar, strand, sequence, offset):
     operations_t = re.findall(r"\d+\D", cigar)
     operations = []
     for operation in operations_t:
@@ -24,11 +24,8 @@ def parse_cigar(cigar, strand, imgtseq, offset):
     #print(operations)
         #print(str(nr) + " " + str(op))
     #state = (0, "exon")
-    lengths = [len(x) for x in imgtseq.split("|")[1:-1]]
+    lengths = [len(x) for x in sequence.split("|")[1:-1]]
     spos = [sum(lengths[:y]) for y in range(1, len(lengths) + 1)]
-    #print(lengths)
-    #print(spos)
-    #sys.exit()
     cipo = spos.pop(0)
     cpos_gene = 1
     cpos_hapl = 1
@@ -46,27 +43,24 @@ def parse_cigar(cigar, strand, imgtseq, offset):
             sys.exit(1)
 
         if cpos_gene == cipo:
-            #print(cpos_gene)
             bounds.append(cpos_hapl)
             if len(spos) == 0:
-                #print("spos is empty!")
-                #print(len(operations[nrop:]))
-                #print(len(haploseq))
-                #print("pos hapl: " + str(cpos_hapl))
-                #print("pos gene: " + str(cpos_gene))
                 
                 intervals = []
                 interval_start = 0
                 for b in bounds:
                     intervals.append((interval_start, b-1))
                     interval_start = b
-                #print(bounds)
-                #print(intervals)
                 return intervals
-                #sys.exit(1)
             else:
                 cipo = spos.pop(0)
-    #print(lengths)
+    else:
+        intervals = []
+        interval_start = 0
+        for b in bounds:
+            intervals.append((interval_start, b-1))
+            interval_start = b
+        return intervals
 
     
 def intervals2positions(intervals, strand, hstart, hstop):
@@ -92,11 +86,12 @@ def main(arguments):
     cwd = os.getcwd()
 
 
-    gene_type_lst = resources.open_text(mhca.data, 'genes_pseudogenes.tsv')
+    #gene_type_lst = resources.open_text(mhca.data, 'genes_pseudogenes.tsv')
     gene_type = {}
-    for line in gene_type_lst: 
-        name, gtype = line.rstrip().split(",")
-        gene_type[name] = gtype
+    with open("data/genes_pseudogenes.tsv") as gene_type_lst:
+        for line in gene_type_lst: 
+            name, gtype = line.rstrip().split(",")
+            gene_type[name] = gtype
 
 
     full_allele = defaultdict(dict)
@@ -108,6 +103,7 @@ def main(arguments):
                 idx, seq = rec
                 full_allele[gene][idx] = seq
                 #sys.exit(0)
+
 
 
     with open(args.haplotype) as inf:
@@ -188,11 +184,11 @@ def main(arguments):
             geneid = "gene-" + gene 
             proper_start = int(b_allele.hstart)+1
             if gene_type[gene] == "pseudogene":
-                outf.write("\t".join([haplotype_name, "th", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + geneid]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + geneid]) + "\n")
             else:
-                outf.write("\t".join([haplotype_name, "th", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + geneid]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + geneid]) + "\n")
                 rnaid = "rna-" + gene + "-1"
-                outf.write("\t".join([haplotype_name, "th", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
                 print(best)
                 print(b_allele.cigar)
                 
@@ -222,13 +218,16 @@ def main(arguments):
         
     pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
     mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), args.refseqgene_s2s_fasta, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+    transcript_maps = dict()
     gene_maps = dict()
-    transcripts = defaultdict(list)
+    transcripts = {}
+    transcripts_per_gene = defaultdict(list)
     with open(args.refseqgene_full_fasta) as inf:
         for rec in SimpleFastaParser(inf):
-            idx, seq = rec
-            gene, transcript = idx.split("_")
-            transcripts[gene].append((idx,seq))
+            gene_tr, seq = rec
+            gene, transcript = gene_tr.split("_")
+            transcripts[gene_tr] = seq
+            transcripts_per_gene[gene].append(gene_tr)
         
     #for gene, trs in transcripts.items():
        # print(gene + ": " + str(len(trs)))
@@ -236,40 +235,77 @@ def main(arguments):
     with open(pafout) as rfile, open(args.refseqgene_full_fasta) as full_file:
         for line in rfile:
             if line.startswith('#'): continue
-            gene, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
+            gene_tr, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
+            gene, transcript = gene_tr.split("_")
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
             if alen != astop and not ignore_length: continue
             if astart != "0" and not ignore_length: continue
-            if gene in full_allele: continue
+            if gene in full_allele: continue # if gene in IMGT we don't handle this here
             for field in line.split():
                 if field.startswith("NM:"):
                     score = int(field.lstrip("NM:i"))
                 elif field.startswith("cg:"):
                     cig = field.lstrip("cg:Z")
-            gene_maps[gene] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
-            b_gene = gene_maps[gene]
-            with open(anno_file,"a") as outf:
+
+            if gene_tr in transcript_maps: 
+                print(f"Found gene again: {gene_tr}")
+                if gene in {"C4A", "C4B"}:
+                    print(f"Using rule: C4A comes before C4B")
+                    mapping = transcript_maps[gene_tr]
+                    if gene == "C4A":
+                        if mapping.hstart > hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                    elif gene == "C4B":
+                        if mapping.hstart < hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                else:
+                    print("skipping.")
+                    continue
+
+            else: transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+    for gene_tr,transcript_map in transcript_maps.items():
+        gene, _ = gene_tr.split("_")
+        #if gene == "ATP6V1G2": print(f"ATP6..: {transcript_map}")
+        if gene in gene_maps:
+            nhstart = min(transcript_map.hstart, gene_maps[gene][0])
+            nhstop = max(transcript_map.hstop, gene_maps[gene][1])
+            assert transcript_map.strand == gene_maps[gene][2]
+            gene_maps[gene] = (nhstart, nhstop, transcript_map.strand)
+        else:
+            gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
+        #b_gene = gene_maps[gene]
+
+    with open(anno_file,"a") as outf:
+        for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
+            gene_map = gene_maps[gene]
+            geneid = "rsgene-" + gene 
+            gstart, gstop, gstrand = gene_maps[gene]
+            proper_start = int(gstart)+1
+            outf.write("\t".join([haplotype_name, "mhc_annotate", "gene", str(proper_start), gstop, ".", gstrand, ".", "ID=" + geneid]) + "\n")
+            for gene_tr in transcripts_per_gene[gene]:
+                b_gene = transcript_maps[gene_tr]
+                gene, transcript = gene_tr.split("_")
                 geneid = "rsgene-" + gene 
-                proper_start = int(b_gene.hstart)+1
-                outf.write("\t".join([haplotype_name, "th", "gene", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", "ID=" + geneid]) + "\n")
-                for tr in transcripts[gene]:
-                    rnaid = "rna-" + gene + "-" + str(tr[0].split("_")[1])
-                    outf.write("\t".join([haplotype_name, "th", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
-                    intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr[1], int(b_gene.hstart))
-                    positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
-                    positions_nr = []
-                    for nr, pos in enumerate(positions[::2]):
-                        positions_nr.append((pos[0],pos[1],nr))
-                    if b_gene.strand == "-": positions_nr = positions_nr[::-1]
-                    #positions_sorted = sorted_positions(
-                    #print(positions-)
-                    for pos in positions_nr:
-                        cdsid = "cds-" + gene + "-" + str(pos[2])
-                        outf.write("\t".join([haplotype_name, "th", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, ".", "ID=" + cdsid + ";Parent=" + rnaid]) + "\n")
+                # Writing gene
+                #for tr in transcripts[gene]:
+                tr = transcripts[gene_tr]
+                rnaid = "rna-" + gene_tr
+                outf.write("\t".join([haplotype_name, "mhc_annotate", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
+                intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
+                positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
+                positions_nr = []
+                for nr, pos in enumerate(positions[::2]):
+                    positions_nr.append((pos[0],pos[1],nr))
+                if b_gene.strand == "-": positions_nr = positions_nr[::-1]
+                #positions_sorted = sorted_positions(
+                #print(positions-)
+                for pos in positions_nr:
+                    cdsid = "cds-" + gene + "-" + str(pos[2])
+                    outf.write("\t".join([haplotype_name, "mhc_annotate", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, ".", "ID=" + cdsid + ";Parent=" + rnaid]) + "\n")
     
     
 if __name__ == "__main__":
     #print(sys.argv[1:])
     main(sys.argv[1:])
     
-    
+   
