@@ -1,14 +1,7 @@
-import os
-import sys
-from collections import defaultdict, Counter, namedtuple
 from argparse import ArgumentParser 
-from Bio.SeqIO.FastaIO import SimpleFastaParser
 from Bio import SeqIO
 from Bio.Seq import Seq
 from BCBio import GFF
-import matplotlib.pyplot as plt
-import subprocess
-import re
 
 parser = ArgumentParser()
 parser.add_argument("haplotype")
@@ -68,7 +61,7 @@ with open(args.annotation_gff) as inf:
                         #if tlen%3 != 0:
                         #    print(gene.id + ": CDS length is not divisible by 3. Length: " + str(tlen))
                         if idx == -1:
-                            print(gene.id + ": no stop found")
+                            print(f"{rna.id}: no stop found")
                         elif idx + 1 != len(protein_seq):
                             #to_consume = idx*3
                             #for i,l in enumerate(lengths):
@@ -80,10 +73,13 @@ with open(args.annotation_gff) as inf:
                             #if strand == -1: position = ends[cds_nr-1] - rest
                             position = 0
                             #else: position = starts[cds_nr-1] + rest
-                            print(f"{rna.id}: found premature stop at codon {idx}. Gesamtlänge {len(protein_seq)}")
+                            print(f"{rna.id}: found premature stop at codon {idx}. Total length: {len(protein_seq)}")
+                            #outstr = "-".join(rna.id.split("-")[2:])
+                            #print(f"{outstr},early_stop")
                             print(protein_seq)
                         else:
-                            print(f"{rna.id}: all good")
+                            pass
+                            #print(f"{rna.id}: all good")
                         #for cds in rna.sub_features:
                             #print(cds)
                         #    pass
