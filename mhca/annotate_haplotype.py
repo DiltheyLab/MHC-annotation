@@ -10,6 +10,10 @@ import re
 from importlib import resources
 #import mhca.data
 
+# TODO: This is project specific
+locus_tag_prefix = { "APD": "LCF46", "DBB": "LCF47", "MANN": "LCF48", "KAS116": "LCF49", "QBL": "LCF50", "SSTO": "LCF51", "PGF": "n.a."}
+
+
 def write_header(fileh, name, length):
     fileh.write("##gff-version 3.1.26\n")
     fileh.write(f"##sequence-region {name} 1 {length}\n")
@@ -124,9 +128,14 @@ def main(arguments):
                 #sys.exit(0)
     
     anno_file = os.path.join(os.path.abspath(args.output_folder), haplotype_name + ".gff")
-
     with open(anno_file, "w") as outf:
         write_header(outf, haplotype_name, len(haplotype_seq))
+
+    if haplotype_sname not in locus_tag_prefix:
+        print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
+        sys.exit(2)
+    nr_annotated_genes = 0
+
 
     allele_map = namedtuple('Allele_mapping', ['gene_score', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
         
@@ -193,16 +202,21 @@ def main(arguments):
         with open(anno_file,"a") as outf:
             geneid = "gene-" + haplotype_sname + "-" + gene 
             proper_start = int(b_allele.hstart)+1
+            nr_annotated_genes += 1
+            locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             if gene_type[gene] == "pseudogene":
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={geneid}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
             else:
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={geneid}"]) + "\n")
+                #outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
                 gene_tr = gene + "_tr1"
                 if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
                     print(f"{gene_tr}: early stop in CDS, skipped")
                     continue 
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
+                transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
+                protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
                 #print(best)
                 #print(b_allele.cigar)
                 
@@ -303,8 +317,10 @@ def main(arguments):
             geneid = "gene-" + haplotype_sname + "-" + gene 
             gstart, gstop, gstrand = gene_maps[gene]
             proper_start = int(gstart)+1
-            outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={geneid}"]) + "\n")
-            for gene_tr in transcripts_per_gene[gene]:
+            nr_annotated_genes += 1
+            locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
                 b_gene = transcript_maps[gene_tr]
                 gene, transcript = gene_tr.split("_")
                 geneid = "gene-" + haplotype_sname + "-" + gene 
@@ -315,7 +331,9 @@ def main(arguments):
                     print(f"{gene_tr}: early stop in CDS, skipped")
                     continue 
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
-                outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", "ID=" + rnaid + ";Parent=" + geneid]) + "\n")
+                transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"
+                protein_id = f"gnl|DiltheyHHU|{locus_tag}.{transcript_nr+1}"
+                outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
                     
                 intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
                 positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
@@ -329,7 +347,7 @@ def main(arguments):
                 #print(positions-)
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), "ID=" + cdsid + ";Parent=" + rnaid]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
     
     
 if __name__ == "__main__":
