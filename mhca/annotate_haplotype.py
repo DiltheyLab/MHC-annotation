@@ -102,7 +102,8 @@ def main(arguments):
 
     with open(args.haplotype) as inf:
         for rec in SimpleFastaParser(inf):
-            haplotype_name, haplotype_seq = rec
+            haplotype_name_with_desc, haplotype_seq = rec
+            haplotype_name = haplotype_name_with_desc.split(" ")[0]
             haplotype_sname = haplotype_name.split("_")[1]
             break
         else:
@@ -205,18 +206,18 @@ def main(arguments):
             nr_annotated_genes += 1
             locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             if gene_type[gene] == "pseudogene":
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
-                #outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
                 gene_tr = gene + "_tr1"
+                pseudo_string = ""
                 if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
-                    print(f"{gene_tr}: early stop in CDS, skipped")
-                    continue 
+                    print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
+                    pseudo_string = ";pseudo=true"
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
                 #print(best)
                 #print(b_allele.cigar)
                 
@@ -232,7 +233,7 @@ def main(arguments):
                 #print(positions-)
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene + "_tr1" + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "CDS",str(pos[0]),str(pos[1]), ".", b_allele.strand, str(pos[3]), "ID=" + cdsid + ";Parent=" + rnaid]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "CDS",str(pos[0]),str(pos[1]), ".", b_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
                 #sys.exit()
 
         
@@ -327,13 +328,15 @@ def main(arguments):
                 # Writing gene
                 #for tr in transcripts[gene]:
                 tr = transcripts[gene_tr]
+                pseudo_string = ""
                 if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
-                    print(f"{gene_tr}: early stop in CDS, skipped")
-                    continue 
+                    print(f"{gene_tr}: early stop in CDS. Skipped!")
+                    #pseudo_string = ";pseudo=true"
+                    continue
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.{transcript_nr+1}"
-                outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
                     
                 intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
                 positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
@@ -347,7 +350,7 @@ def main(arguments):
                 #print(positions-)
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id}"]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
     
     
 if __name__ == "__main__":

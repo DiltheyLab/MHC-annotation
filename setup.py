@@ -16,5 +16,6 @@ setup(
         'console_scripts': [
             'annotate= mhca.__main__:main',
         ],
-},
+    },
+    python_requires=">=3.6",
 )
