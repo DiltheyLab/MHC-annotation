@@ -11,11 +11,11 @@ setup(
     url='https://github.com/DiltheyLab/MHC-annotation',
     packages=find_packages(),
     package_dir={'mhca': 'mhca'},
-    package_data={'mhca': ['data/*']},
+    package_data={'': ['data/*']},
     entry_points={
         'console_scripts': [
             'annotate= mhca.__main__:main',
         ],
     },
-    python_requires=">=3.6",
+    python_requires=">=3.7",
 )

@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 from collections import defaultdict, Counter, namedtuple
 from argparse import ArgumentParser 
 from Bio import SeqIO
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 import subprocess
 import re
 from importlib import resources
-#import mhca.data
+import mhca.data
 
 # TODO: This is project specific
 locus_tag_prefix = { "APD": "LCF46", "DBB": "LCF47", "MANN": "LCF48", "KAS116": "LCF49", "QBL": "LCF50", "SSTO": "LCF51", "PGF": "n.a."}
@@ -92,9 +93,9 @@ def main(arguments):
     
     haplotype_sname = ""
 
-    #gene_type_lst = resources.open_text(mhca.data, 'genes_pseudogenes.tsv')
     gene_type = {}
-    with open("data/genes_pseudogenes.tsv") as gene_type_lst:
+    #with open("data/genes_pseudogenes.tsv") as gene_type_lst:
+    with resources.open_text(mhca.data, 'genes_pseudogenes.tsv') as gene_type_lst:
         for line in gene_type_lst: 
             name, gtype = line.rstrip().split(",")
             gene_type[name] = gtype
@@ -145,6 +146,7 @@ def main(arguments):
         os.remove(choicefile)
 
     endbonus = 0
+    """
     for fasta in os.listdir(args.imgt_folder):
         if not fasta.endswith("s2s.fasta"): continue
         gene = fasta.split("_")[0]
@@ -154,7 +156,27 @@ def main(arguments):
             if "not_found" in manual_corrections[gene]:
                 print("Not in haplotype, skipped")
                 continue
-            """ This is a fix for HLA-E that does not work. HLA-E is skipped for now
+    """
+    imgt_genes_with_bounds = defaultdict(list)
+    for fasta in os.listdir(args.imgt_folder):
+        if not fasta.endswith("full.fasta"): continue
+        gene = fasta.split("_")[0]
+        fpath = os.path.join(cwd, args.imgt_folder, fasta)
+        with open(fpath) as inf:
+            for aidx, seq in SimpleFastaParser(inf):
+                s2s_seq = "".join(seq.split("|")[1:-1])
+                imgt_genes_with_bounds[gene].append((aidx, seq))
+        
+        #imgt_genes_with_bounds[gene]
+    for gene, allele_list in imgt_genes_with_bounds.items():
+        pafout = os.path.join(os.path.abspath(args.output_folder),gene + ".paf")
+        """
+        if gene in manual_corrections:
+            print(f"{gene}: ", end="")
+            if "not_found" in manual_corrections[gene]:
+                print("Not in haplotype. Skipping")
+                continue
+            #This is a fix for HLA-E that does not work. HLA-E is skipped for now
             if "cut_last_175" in manual_corrections[gene]:
                 print("Fixing the sequence")
                 fixed_fasta = fasta.split(".")[0] + "_fixed.fasta"
@@ -167,8 +189,14 @@ def main(arguments):
                 fasta = fixed_fasta
             """
 
-        #mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), os.path.join(cwd, args.imgt_folder, fasta), "-o", pafout, "-x", "asm10","-c","--end-bonus","20" ], capture_output=True)
-        mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), os.path.join(cwd, args.imgt_folder, fasta), "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+        #print([x[0] for x in allele_list])
+        with tempfile.NamedTemporaryFile(mode="w+") as input_fasta:
+            for aname, aseq in allele_list:
+                input_fasta.write(f">{aname}\n")
+                input_fasta.write(f"{aseq}\n")
+                #print(inputfasta.name)
+            #mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), os.path.join(cwd, args.imgt_folder, fasta), "-o", pafout, "-x", "asm10","-c","--end-bonus","20" ], capture_output=True)
+            mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
         allele_maps = dict()
         problem_cases = []
         with open(pafout) as rfile:
@@ -191,9 +219,11 @@ def main(arguments):
                     #print(line.split()[0] + "\t" + str(score))
                     allele_maps[allele] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
         if len(allele_maps) < 1: 
-            print(f"Warning. No full match found in PAF file for {gene}\n")
+            print(f"Warning. No full match found in PAF file for {gene}. Skipping...")
+            continue
+
             #print("\n".join(problem_cases))
-            sys.exit(1)
+            #sys.exit(1)
         
         best = sorted(allele_maps, key= lambda x: allele_maps[x].gene_score)[0]
         with open(choicefile,'a') as outf:
@@ -330,7 +360,7 @@ def main(arguments):
                 tr = transcripts[gene_tr]
                 pseudo_string = ""
                 if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
-                    print(f"{gene_tr}: early stop in CDS. Skipped!")
+                    print(f"{gene_tr}: early stop in CDS. Skipping...")
                     #pseudo_string = ";pseudo=true"
                     continue
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
