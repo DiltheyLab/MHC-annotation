@@ -115,14 +115,18 @@ def main(args):
                 gene, wti = line.rstrip().split(",")
                 manual_corrections[gene].append(wti)
 
-    full_allele = defaultdict(dict)
+    full_allele_bounds = defaultdict(dict)
+    s2s_allele_bounds = defaultdict(dict)
+    s2s_allele_nobounds = defaultdict(dict)
     for fasta in os.listdir(args.imgt_folder):
         if not "full" in fasta or not fasta.endswith("fasta"): continue
         gene = fasta.split("_")[0]
         with open(os.path.join(cwd, args.imgt_folder, fasta)) as inf:
             for rec in SimpleFastaParser(inf):
                 idx, seq = rec
-                full_allele[gene][idx] = seq
+                full_allele_bounds[gene][idx] = seq
+                s2s_allele_bounds[gene][idx] = "|".join(seq.split("|")[1:-1])
+                s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
                 #sys.exit(0)
     
     anno_file = os.path.join(os.path.abspath(args.output_folder), haplotype_name + ".gff")
@@ -142,21 +146,12 @@ def main(args):
         os.remove(choicefile)
 
     endbonus = 0
-    imgt_genes_with_bounds = defaultdict(list)
-    for fasta in os.listdir(args.imgt_folder):
-        if not fasta.endswith("full.fasta"): continue
-        gene = fasta.split("_")[0]
-        fpath = os.path.join(cwd, args.imgt_folder, fasta)
-        with open(fpath) as inf:
-            for aidx, seq in SimpleFastaParser(inf):
-                s2s_seq = "".join(seq.split("|")[1:-1])
-                imgt_genes_with_bounds[gene].append((aidx, s2s_seq))
         
-    for gene, allele_list in imgt_genes_with_bounds.items():
+    for gene, allele_dict in s2s_allele_nobounds.items():
         pafout = os.path.join(os.path.abspath(args.output_folder),gene + ".paf")
 
         with tempfile.NamedTemporaryFile(mode="w+") as input_fasta:
-            for aname, aseq in allele_list:
+            for aname, aseq in allele_dict.items():
                 input_fasta.write(f">{aname}\n")
                 input_fasta.write(f"{aseq}\n")
                 #print(inputfasta.name)
@@ -191,14 +186,14 @@ def main(args):
         with open(choicefile,'a') as outf:
             outf.write(gene + "\t" + best + "\t" + str(allele_maps[best])+ "\n")
 
-        b_allele = allele_maps[best]
+        best_allele = allele_maps[best]
         with open(anno_file,"a") as outf:
             geneid = "gene-" + haplotype_sname + "-" + gene 
-            proper_start = int(b_allele.hstart)+1
+            proper_start = int(best_allele.hstart)+1
             nr_annotated_genes += 1
             locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             if gene_type[gene] == "pseudogene":
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
                 gene_tr = gene + "_tr1"
                 pseudo_string = ""
@@ -208,23 +203,23 @@ def main(args):
                     #print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
                     #pseudo_string = ";pseudo=true"
 
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), b_allele.hstop, ".", b_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
                 
-                intervals = parse_cigar(b_allele.cigar, b_allele.strand, full_allele[gene][best], int(b_allele.hstart))
-                positions = intervals2positions(intervals, b_allele.strand, proper_start, int(b_allele.hstop))
+                intervals = parse_cigar(best_allele.cigar, best_allele.strand, full_allele_bounds[gene][best], int(best_allele.hstart))
+                positions = intervals2positions(intervals, best_allele.strand, proper_start, int(best_allele.hstop))
                 positions_nr = []
                 frame_pos = 0
                 for nr, pos in enumerate(positions[::2]):
                     positions_nr.append((pos[0],pos[1],nr,frame_pos))
                     frame_pos = (frame_pos + 3 - ((pos[1]+1-pos[0]) % 3)) % 3 # seems complicated but isn't ;) 
-                if b_allele.strand == "-": positions_nr = positions_nr[::-1]
+                if best_allele.strand == "-": positions_nr = positions_nr[::-1]
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene + "_tr1" + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "CDS",str(pos[0]),str(pos[1]), ".", b_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "CDS",str(pos[0]),str(pos[1]), ".", best_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
                 #sys.exit()
 
         
@@ -232,50 +227,37 @@ def main(args):
     ################################
     ######## Refseqgene ############
     ################################
-    full_rsg = defaultdict(dict)
-    """with open(args.refseqgene_full_fasta) as inf:
-        for rec in SimpleFastaParser(inf):
-            gene, seq = rec
-            full_rsg[gene] = seq
-    """
-    transcripts = {}
+    rsg_full_transcripts = {}
+    rsg_s2s_nobounds = {}
     transcripts_per_gene = defaultdict(list)
+    def fill_rsg_structures(infile):
+        for rec in SimpleFastaParser(infile):
+            gene_tr, seq = rec
+            gene, transcript = gene_tr.split("_")
+            rsg_full_transcripts[gene_tr] = seq
+            rsg_s2s_nobounds[gene_tr] = "".join(seq.split("|")[1:-1])
+            transcripts_per_gene[gene].append(gene_tr)
+
     if args.refseqgene_full_fasta:
         with open(args.refseqgene_full_fasta) as inf:
-            for rec in SimpleFastaParser(inf):
-                gene_tr, seq = rec
-                full_rsg[gene] = seq
-                gene, transcript = gene_tr.split("_")
-                transcripts[gene_tr] = seq
-                transcripts_per_gene[gene].append(gene_tr)
+            fill_rsg_structures(inf)
     else: 
         import tarfile 
         with resources.path(mhca.data, 'rsg_transcripts.tar.gz') as path:
-            with tarfile.open(path) as inf:
-                for x in inf.getmembers():
-                    inf2 = tar_lines_reader(inf.extractfile(x).readlines())
-                    for rec in SimpleFastaParser(inf2):
-                        gene_tr, seq = rec
-                        full_rsg[gene] = seq
-                        gene, transcript = gene_tr.split("_")
-                        transcripts[gene_tr] = seq
-                        transcripts_per_gene[gene].append(gene_tr)
+            with tarfile.open(path) as tar:
+                for x in tar.getmembers():
+                    inf = tar_lines_reader(tar.extractfile(x).readlines())
+                    fill_rsg_structures(inf)
     #print(transcripts_per_gene)
+    with tempfile.NamedTemporaryFile(mode="w+") as rsg_input_fasta:
+        for gene_tr, seq in rsg_s2s_nobounds.items():
+            rsg_input_fasta.write(f">{gene_tr}\n")
+            rsg_input_fasta.write(f"{seq}\n")
         
-    pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
-    mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), args.refseqgene_s2s_fasta, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+        pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
+        mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rsg_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
     transcript_maps = dict()
     gene_maps = dict()
-    """
-    transcripts = {}
-    transcripts_per_gene = defaultdict(list)
-    with open(args.refseqgene_full_fasta) as inf:
-        for rec in SimpleFastaParser(inf):
-            gene_tr, seq = rec
-            gene, transcript = gene_tr.split("_")
-            transcripts[gene_tr] = seq
-            transcripts_per_gene[gene].append(gene_tr)
-    """
         
     #for gene, trs in transcripts.items():
        # print(gene + ": " + str(len(trs)))
@@ -291,7 +273,7 @@ def main(args):
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
             if alen != astop and not ignore_length: continue
             if astart != "0" and not ignore_length: continue
-            if gene in full_allele: continue # if gene in IMGT we don't handle this here
+            if gene in full_allele_bounds: continue # if gene in IMGT we don't handle this here
             for field in line.split():
                 if field.startswith("NM:"):
                     score = int(field.lstrip("NM:i"))
@@ -341,7 +323,7 @@ def main(args):
                 b_gene = transcript_maps[gene_tr]
                 gene, transcript = gene_tr.split("_")
                 geneid = "gene-" + haplotype_sname + "-" + gene 
-                tr = transcripts[gene_tr]
+                tr = rsg_full_transcripts[gene_tr]
                 pseudo_string = ""
                 if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
                     print(f"{gene_tr}: early stop in CDS. Skipping...")
