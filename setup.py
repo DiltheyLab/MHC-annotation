@@ -14,7 +14,7 @@ setup(
     package_data={'': ['data/*']},
     entry_points={
         'console_scripts': [
-            'annotate= mhca.__main__:main',
+            'mhca=mhca.__main__:main',
         ],
     },
     python_requires=">=3.7",
