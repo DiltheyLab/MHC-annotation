@@ -36,13 +36,12 @@ with open(args.input_gb) as inf, open(args.output_s2s_fa, "w") as outs2s, open(a
                     if qual.key == "/gene=":
                         gene = qual.value.strip("\"")
                 if gene in gene2locus and gene2locus[gene] != record.version: 
-                    print("skipped gene " + gene + " in locus " + record.version)
+                    print(f"skipped gene {gene} in locus {record.version}")
                     continue
-
 
                 if ">" in feat.location or "<" in feat.location: continue # don't want fuzzy locations
                 if feat.location in seen_transcripts[gene]: 
-                    print("skipped transcript for gene " + gene)
+                    print(f"skipped transcript for gene {gene}")
                     continue
                 else: seen_transcripts[gene][feat.location] = record.sequence
 
