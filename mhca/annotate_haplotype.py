@@ -118,16 +118,31 @@ def main(args):
     full_allele_bounds = defaultdict(dict)
     s2s_allele_bounds = defaultdict(dict)
     s2s_allele_nobounds = defaultdict(dict)
-    for fasta in os.listdir(args.imgt_folder):
-        if not "full" in fasta or not fasta.endswith("fasta"): continue
-        gene = fasta.split("_")[0]
-        with open(os.path.join(cwd, args.imgt_folder, fasta)) as inf:
-            for rec in SimpleFastaParser(inf):
-                idx, seq = rec
-                full_allele_bounds[gene][idx] = seq
-                s2s_allele_bounds[gene][idx] = "|".join(seq.split("|")[1:-1])
-                s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
-                #sys.exit(0)
+
+    if args.imgt_folder:
+        for fasta in os.listdir(args.imgt_folder):
+            if not "full" in fasta or not fasta.endswith("fasta"): continue
+            gene = fasta.split("_")[0]
+            with open(os.path.join(cwd, args.imgt_folder, fasta)) as inf:
+                for rec in SimpleFastaParser(inf):
+                    idx, seq = rec
+                    full_allele_bounds[gene][idx] = seq
+                    s2s_allele_bounds[gene][idx] = "|".join(seq.split("|")[1:-1])
+                    s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
+    else: 
+        import tarfile 
+        with resources.path(mhca.data, 'imgt_alleles.tar.gz') as path:
+            with tarfile.open(path) as tar:
+                for x in tar.getmembers():
+                    inf = tar_lines_reader(tar.extractfile(x).readlines())
+                    gene = x.name.split("_")[0]
+                    for rec in SimpleFastaParser(inf):
+                        idx, seq = rec
+                        full_allele_bounds[gene][idx] = seq
+                        s2s_allele_bounds[gene][idx] = "|".join(seq.split("|")[1:-1])
+                        s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
+
+
     
     anno_file = os.path.join(os.path.abspath(args.output_folder), haplotype_name + ".gff")
     with open(anno_file, "w") as outf:
