@@ -192,7 +192,6 @@ def main(args):
                 else:
                     allele, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
                     ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
-                    if gene == "HLA-Y": print(f"{gene} : {ignore_length}")
                     if alen != astop and not ignore_length: 
                         problem_cases.append(line)
                         continue
