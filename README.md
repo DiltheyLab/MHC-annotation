@@ -23,3 +23,14 @@ You will also need the python packages *biopython* and *bcbio-gff*. You can inst
 Install this package with pip.
 
 `pip install MHC-annotation`
+
+## Usage
+
+This tools assumes that you are trying to annotate a sequence that stems from the human MHC region (also known as: HLA-region). If you supply any other sequence, you will most likely receive no meaningful result.
+You can annotate a fasta file with the following command:
+
+`mhca annotate <your_sequence.fa> <output_folder>`
+
+You can check whether the transcript in the resulting gff file would produce meaningful products.
+
+`mhca check_CDS <your_sequence.fa> <output_folder/your_sequence.gff>`
