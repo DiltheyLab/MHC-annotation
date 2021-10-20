@@ -9,6 +9,8 @@ def main():
 
     anno_parser = subparsers.add_parser("annotate")
     anno_parser.add_argument("haplotype", help="Input Haplotype in fasta format.")
+    anno_parser.add_argument("--skip_mapping", default=False, action="store_true", help="If you already have used minimap2 and want to skip this step.")
+    anno_parser.add_argument("--locus_tag_prefix", help="Comma separated file containing the locus_tag_prefix for the haplotype")
     anno_parser.add_argument("--manual_corrections", help="Comma separated file with manual corrections")
     anno_parser.add_argument("--imgt_folder", help="Folder which holds the start to stop codon fastas and the full fastas with exon boundary information.")
     anno_parser.add_argument("--refseqgene_full_fasta", help="Fasta file with exon boundary information (boundaries denoted as: '|'). This can be generated from the RefSeqGene genbank file and the genbank2fullfasta method of this package. If this parameter is omitted, a precompiled version of this is used.")

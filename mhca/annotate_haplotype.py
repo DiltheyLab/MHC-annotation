@@ -9,8 +9,6 @@ from importlib import resources
 import mhca.data
 from Bio.SeqIO.FastaIO import SimpleFastaParser
 
-# TODO: This is project specific
-locus_tag_prefix = { "APD": "LCF46", "DBB": "LCF47", "MANN": "LCF48", "KAS116": "LCF49", "QBL": "LCF50", "SSTO": "LCF51", "PGF": "n.a.", "COX":"n.a."}
 
 
 def write_header(fileh, name, length):
@@ -115,6 +113,13 @@ def main(args):
                 gene, wti = line.rstrip().split(",")
                 manual_corrections[gene].append(wti)
 
+    locus_tag_prefix = {}
+    if args.locus_tag_prefix:
+        with open(args.locus_tag_prefix) as inf:
+            for line in inf:
+                key, val = line.rstrip().split(",")
+                locus_tag_prefix[key] = val
+
     full_allele_bounds = defaultdict(dict)
     s2s_allele_bounds = defaultdict(dict)
     s2s_allele_nobounds = defaultdict(dict)
@@ -143,14 +148,18 @@ def main(args):
                         s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
 
 
+    out_folder = os.path.abspath(args.output_folder)
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
     
-    anno_file = os.path.join(os.path.abspath(args.output_folder), haplotype_name + ".gff")
+    anno_file = os.path.join(out_folder, haplotype_name + ".gff")
     with open(anno_file, "w") as outf:
         write_header(outf, haplotype_name, len(haplotype_seq))
 
-    if haplotype_sname not in locus_tag_prefix:
-        print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
-        sys.exit(2)
+    if args.locus_tag_prefix:
+        if haplotype_sname not in locus_tag_prefix:
+            print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
+            sys.exit(2)
     nr_annotated_genes = 0
 
 
@@ -161,25 +170,29 @@ def main(args):
         os.remove(choicefile)
 
     endbonus = 0
+    problem_cases = []
         
     for gene, allele_dict in s2s_allele_nobounds.items():
         pafout = os.path.join(os.path.abspath(args.output_folder),gene + ".paf")
+        if not args.skip_mapping:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False) as input_fasta:
+                for aname, aseq in allele_dict.items():
+                    input_fasta.write(f">{aname}\n")
+                    input_fasta.write(f"{aseq}\n")
 
-        with tempfile.NamedTemporaryFile(mode="w+") as input_fasta:
-            for aname, aseq in allele_dict.items():
-                input_fasta.write(f">{aname}\n")
-                input_fasta.write(f"{aseq}\n")
-                #print(inputfasta.name)
-            #mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), os.path.join(cwd, args.imgt_folder, fasta), "-o", pafout, "-x", "asm10","-c","--end-bonus","20" ], capture_output=True)
+                    #print(inputfasta.name)
+                #mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), os.path.join(cwd, args.imgt_folder, fasta), "-o", pafout, "-x", "asm10","-c","--end-bonus","20" ], capture_output=True)
             mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+            os.remove(input_fasta.name)
         allele_maps = dict()
-        problem_cases = []
         with open(pafout) as rfile:
             for line in rfile:
-                if line.startswith('#'): continue
+                if line.startswith('#'): 
+                    continue
                 else:
                     allele, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
                     ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
+                    if gene == "HLA-Y": print(f"{gene} : {ignore_length}")
                     if alen != astop and not ignore_length: 
                         problem_cases.append(line)
                         continue
@@ -206,7 +219,9 @@ def main(args):
             geneid = "gene-" + haplotype_sname + "-" + gene 
             proper_start = int(best_allele.hstart)+1
             nr_annotated_genes += 1
-            locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            locus_tag="?"
+            if args.locus_tag_prefix:
+                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             if gene_type[gene] == "pseudogene":
                 outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
@@ -264,13 +279,14 @@ def main(args):
                     inf = tar_lines_reader(tar.extractfile(x).readlines())
                     fill_rsg_structures(inf)
     #print(transcripts_per_gene)
-    with tempfile.NamedTemporaryFile(mode="w+") as rsg_input_fasta:
-        for gene_tr, seq in rsg_s2s_nobounds.items():
-            rsg_input_fasta.write(f">{gene_tr}\n")
-            rsg_input_fasta.write(f"{seq}\n")
-        
-        pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
-        mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rsg_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+    pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
+    if not args.skip_mapping:
+        with tempfile.NamedTemporaryFile(mode="w+") as rsg_input_fasta:
+            for gene_tr, seq in rsg_s2s_nobounds.items():
+                rsg_input_fasta.write(f">{gene_tr}\n")
+                rsg_input_fasta.write(f"{seq}\n")
+            
+            mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rsg_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
     transcript_maps = dict()
     gene_maps = dict()
         
@@ -282,7 +298,7 @@ def main(args):
             if line.startswith('#'): continue
             gene_tr, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
             if "_" not in gene_tr:
-                print(f"Warning: no _ in {gene_tr}")
+                print(f"Fatal error: no _ in {gene_tr}")
                 sys.exit(1)
             gene, transcript = gene_tr.split("_")
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
@@ -296,10 +312,10 @@ def main(args):
                     cig = field.lstrip("cg:Z")
 
             if gene_tr in transcript_maps: 
-                print(f"Found gene again: {gene_tr}")
+                print(f"Found gene again: {gene_tr} ...",end="")
                 if gene in {"C4A", "C4B"}:
                     mapping = transcript_maps[gene_tr]
-                    print(f"Using rule: C4A comes before C4B")
+                    print(f"using rule: C4A comes before C4B")
                     if gene == "C4A":
                         if mapping.hstart > hstart:
                             transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
@@ -307,7 +323,7 @@ def main(args):
                         if mapping.hstart < hstart:
                             transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
                 else:
-                    print("skipping.")
+                    print(f"skipping.")
                     continue
 
             else: transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
@@ -332,7 +348,9 @@ def main(args):
             gstart, gstop, gstrand = gene_maps[gene]
             proper_start = int(gstart)+1
             nr_annotated_genes += 1
-            locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            locus_tag="?"
+            if args.locus_tag_prefix:
+                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
             for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
                 b_gene = transcript_maps[gene_tr]
