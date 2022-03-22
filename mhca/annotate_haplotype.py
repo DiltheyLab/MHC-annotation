@@ -99,12 +99,13 @@ def main(args):
         for rec in SimpleFastaParser(inf):
             haplotype_name_with_desc, haplotype_seq = rec
             haplotype_name = haplotype_name_with_desc.split(" ")[0]
-            haplotype_sname = haplotype_name.split("_")[1]
+            haplotype_sname = haplotype_name
             break
         else:
             print("No name for haplotpye found!")
             sys.exit(1)
 
+    """
     manual_corrections = defaultdict(list)
     if args.manual_corrections:
         with open(args.manual_corrections) as inf:
@@ -112,6 +113,17 @@ def main(args):
                 if line.startswith("#"): continue
                 gene, wti = line.rstrip().split(",")
                 manual_corrections[gene].append(wti)
+    """
+    manual_corrections = {}
+    if args.manual_corrections:
+        with open(args.manual_corrections) as inf:
+            for line in inf:
+                if line.startswith("#"): continue
+                gene, wti = line.rstrip().split(",")
+                if gene in manual_corrections: 
+                    print(f"Double entry for gene {gene} in manual_corrections file. Please check!")
+                    sys.exit(1)
+                manual_corrections[gene] = wti
 
     locus_tag_prefix = {}
     if args.locus_tag_prefix:
@@ -163,6 +175,10 @@ def main(args):
     nr_annotated_genes = 0
 
 
+    ################################
+    ######## IMGT ##################
+    ################################
+
     allele_map = namedtuple('Allele_mapping', ['gene_score', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
         
     choicefile = os.path.join(os.path.abspath(args.output_folder),haplotype_name+ ".choices")
@@ -173,6 +189,10 @@ def main(args):
     problem_cases = []
         
     for gene, allele_dict in s2s_allele_nobounds.items():
+        if gene in manual_corrections: 
+            if manual_corrections[gene] == "not_found": 
+                print(f"{gene} will not be considered due to manual corrections \"{manual_corrections[gene]}\". Skipping...")
+                continue
         pafout = os.path.join(os.path.abspath(args.output_folder),gene + ".paf")
         if not args.skip_mapping:
             with tempfile.NamedTemporaryFile(mode="w+", delete=False) as input_fasta:
@@ -218,10 +238,11 @@ def main(args):
             geneid = "gene-" + haplotype_sname + "-" + gene 
             proper_start = int(best_allele.hstart)+1
             nr_annotated_genes += 1
+
             locus_tag="?"
             if args.locus_tag_prefix:
                 locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
-            if gene_type[gene] == "pseudogene":
+            if gene in gene_type and gene_type[gene] == "pseudogene":
                 outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
                 gene_tr = gene + "_tr1"
@@ -357,8 +378,8 @@ def main(args):
                 geneid = "gene-" + haplotype_sname + "-" + gene 
                 tr = rsg_full_transcripts[gene_tr]
                 pseudo_string = ""
-                if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
-                    print(f"{gene_tr}: early stop in CDS. Skipping...")
+                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
+                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
                     continue
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"

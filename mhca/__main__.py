@@ -1,5 +1,6 @@
 from mhca import annotate_haplotype
 from mhca import check_CDS
+#from mhca import test_annotate
 from sys import argv, exit
 from argparse import ArgumentParser
 
@@ -20,10 +21,14 @@ def main():
     CDS_parser.add_argument("haplotype", help="Input Haplotype in fasta format.")
     CDS_parser.add_argument("annotation_gff")
 
+    #test_parser = subparsers.add_parser("test")
+
     args = parser.parse_args()
     if args.subparser_name == "annotate":
         return annotate_haplotype.main( args )
     elif args.subparser_name == "check_CDS":
         return check_CDS.main( args )
+    #elif args.subparser_name == "test":
+    #    return test_annotate.main( args )
     else:
         parser.print_help()
