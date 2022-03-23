@@ -82,59 +82,16 @@ def tar_lines_reader(lines_from_tar):
     """ Decode lines from tar """
     for line in lines_from_tar:
         yield line.decode("utf8").rstrip()
-        
 
-def main(args):
-    """ Main function to annotate haplotype """
-    cwd = os.getcwd()
-    haplotype_sname = ""
-
-    gene_type = {}
-    with resources.open_text(mhca.data, 'genes_pseudogenes.tsv') as gene_type_lst:
-        for line in gene_type_lst: 
-            name, gtype = line.rstrip().split(",")
-            gene_type[name] = gtype
-
-    with open(args.haplotype) as inf:
-        for rec in SimpleFastaParser(inf):
-            haplotype_name_with_desc, haplotype_seq = rec
-            haplotype_name = haplotype_name_with_desc.split(" ")[0]
-            haplotype_sname = haplotype_name
-            break
-        else:
-            print("No name for haplotpye found!")
-            sys.exit(1)
-
-    """
-    manual_corrections = defaultdict(list)
-    if args.manual_corrections:
-        with open(args.manual_corrections) as inf:
-            for line in inf:
-                if line.startswith("#"): continue
-                gene, wti = line.rstrip().split(",")
-                manual_corrections[gene].append(wti)
-    """
-    manual_corrections = {}
-    if args.manual_corrections:
-        with open(args.manual_corrections) as inf:
-            for line in inf:
-                if line.startswith("#"): continue
-                gene, wti = line.rstrip().split(",")
-                if gene in manual_corrections: 
-                    print(f"Double entry for gene {gene} in manual_corrections file. Please check!")
-                    sys.exit(1)
-                manual_corrections[gene] = wti
-
-    locus_tag_prefix = {}
-    if args.locus_tag_prefix:
-        with open(args.locus_tag_prefix) as inf:
-            for line in inf:
-                key, val = line.rstrip().split(",")
-                locus_tag_prefix[key] = val
-
+################################
+######## IMGT ##################
+################################
+def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus, gene_type, manual_corrections, annotated_genes, anno_file):
     full_allele_bounds = defaultdict(dict)
     s2s_allele_bounds = defaultdict(dict)
     s2s_allele_nobounds = defaultdict(dict)
+    nr_annotated_genes = len(annotated_genes)
+    annotated_genes = annotated_genes
 
     if args.imgt_folder:
         for fasta in os.listdir(args.imgt_folder):
@@ -160,32 +117,12 @@ def main(args):
                         s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
 
 
-    out_folder = os.path.abspath(args.output_folder)
-    if not os.path.exists(out_folder):
-        os.makedirs(out_folder)
-    
-    anno_file = os.path.join(out_folder, haplotype_name + ".gff")
-    with open(anno_file, "w") as outf:
-        write_header(outf, haplotype_name, len(haplotype_seq))
 
-    if args.locus_tag_prefix:
-        if haplotype_sname not in locus_tag_prefix:
-            print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
-            sys.exit(2)
-    nr_annotated_genes = 0
-
-
-    ################################
-    ######## IMGT ##################
-    ################################
-
-    allele_map = namedtuple('Allele_mapping', ['gene_score', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
         
     choicefile = os.path.join(os.path.abspath(args.output_folder),haplotype_name+ ".choices")
     if os.path.exists(choicefile):
         os.remove(choicefile)
 
-    endbonus = 0
     problem_cases = []
         
     for gene, allele_dict in s2s_allele_nobounds.items():
@@ -229,7 +166,7 @@ def main(args):
             print(f"Warning. No full match found in PAF file for {gene}. Skipping...")
             continue
         
-        best = sorted(allele_maps, key= lambda x: allele_maps[x].gene_score)[0]
+        best = sorted(allele_maps, key= lambda x: allele_maps[x].edit_dist)[0]
         with open(choicefile,'a') as outf:
             outf.write(gene + "\t" + best + "\t" + str(allele_maps[best])+ "\n")
 
@@ -237,13 +174,14 @@ def main(args):
         with open(anno_file,"a") as outf:
             geneid = "gene-" + haplotype_sname + "-" + gene 
             proper_start = int(best_allele.hstart)+1
-            nr_annotated_genes += 1
+            annotated_genes.add(gene)
+            nr_annotated_genes = len(annotated_genes)
 
             locus_tag="?"
             if args.locus_tag_prefix:
                 locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
             if gene in gene_type and gene_type[gene] == "pseudogene":
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
                 gene_tr = gene + "_tr1"
                 pseudo_string = ""
@@ -253,11 +191,11 @@ def main(args):
                     #print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
                     #pseudo_string = ";pseudo=true"
 
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "gene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "gene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
-                outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "mRNA", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "mRNA", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
                 
                 intervals = parse_cigar(best_allele.cigar, best_allele.strand, full_allele_bounds[gene][best], int(best_allele.hstart))
                 positions = intervals2positions(intervals, best_allele.strand, proper_start, int(best_allele.hstop))
@@ -269,17 +207,79 @@ def main(args):
                 if best_allele.strand == "-": positions_nr = positions_nr[::-1]
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene + "_tr1" + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate IMGT", "CDS",str(pos[0]),str(pos[1]), ".", best_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "CDS",str(pos[0]),str(pos[1]), ".", best_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
                 #sys.exit()
-
+    return annotated_genes
         
 
-    ################################
-    ######## Refseqgene ############
-    ################################
+def main(args):
+    """ Main function to annotate haplotype """
+    cwd = os.getcwd()
+    haplotype_sname = ""
+
+    gene_type = {}
+    with resources.open_text(mhca.data, 'genes_pseudogenes.tsv') as gene_type_lst:
+        for line in gene_type_lst: 
+            name, gtype = line.rstrip().split(",")
+            gene_type[name] = gtype
+
+    with open(args.haplotype) as inf:
+        for rec in SimpleFastaParser(inf):
+            haplotype_name_with_desc, haplotype_seq = rec
+            haplotype_name = haplotype_name_with_desc.split(" ")[0]
+            haplotype_sname = haplotype_name
+            break
+        else:
+            print("No name for haplotpye found!")
+            sys.exit(1)
+
+    manual_corrections = {}
+    if args.manual_corrections:
+        with open(args.manual_corrections) as inf:
+            for line in inf:
+                if line.startswith("#"): continue
+                gene, wti = line.rstrip().split(",")
+                if gene in manual_corrections: 
+                    print(f"Double entry for gene {gene} in manual_corrections file. Please check!")
+                    sys.exit(1)
+                manual_corrections[gene] = wti
+
+    locus_tag_prefix = {}
+    if args.locus_tag_prefix:
+        with open(args.locus_tag_prefix) as inf:
+            for line in inf:
+                key, val = line.rstrip().split(",")
+                locus_tag_prefix[key] = val
+
+    out_folder = os.path.abspath(args.output_folder)
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
+    
+    anno_file = os.path.join(out_folder, haplotype_name + ".gff")
+    with open(anno_file, "w") as outf:
+        write_header(outf, haplotype_name, len(haplotype_seq))
+
+    if args.locus_tag_prefix:
+        if haplotype_sname not in locus_tag_prefix:
+            print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
+            sys.exit(2)
+    endbonus = 0
+    annotated_genes = set()
+    allele_map = namedtuple('Allele_mapping', ['edit_dist', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
+
+    annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
+
+    annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+        
+
+################################
+######## Refseqgene ############
+################################
+def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
     rsg_full_transcripts = {}
     rsg_s2s_nobounds = {}
     transcripts_per_gene = defaultdict(list)
+    nr_annotated_genes = len(annotated_genes)
     def fill_rsg_structures(infile):
         for rec in SimpleFastaParser(infile):
             gene_tr, seq = rec
@@ -324,7 +324,7 @@ def main(args):
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
             if alen != astop and not ignore_length: continue
             if astart != "0" and not ignore_length: continue
-            if gene in full_allele_bounds: continue # if gene in IMGT we don't handle this here
+            if gene in annotated_genes: continue # if gene is already annotated skip
             for field in line.split():
                 if field.startswith("NM:"):
                     score = int(field.lstrip("NM:i"))
@@ -371,8 +371,9 @@ def main(args):
             locus_tag="?"
             if args.locus_tag_prefix:
                 locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
-            outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
             for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
+                if gene_tr not in transcript_maps: continue
                 b_gene = transcript_maps[gene_tr]
                 gene, transcript = gene_tr.split("_")
                 geneid = "gene-" + haplotype_sname + "-" + gene 
@@ -384,7 +385,7 @@ def main(args):
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.{transcript_nr+1}"
-                outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
                     
                 intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
                 positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
@@ -398,7 +399,15 @@ def main(args):
                 #print(positions-)
                 for pos in positions_nr:
                     cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                    outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+
+    return annotated_genes
+
+
+    ############
+    #Refseq 38 #
+    ############
+    
     
     
 if __name__ == "__main__":
