@@ -16,6 +16,7 @@ class TestAnnotate(unittest.TestCase):
             file_content = fasta_zipped.read()
             fasta_plain.write(file_content)
         self.outfolder = testfolder / 'tmp_out'
+        self.outfolder.mkdir()
         self.outfile_template = testfolder / 'test1_template.gff'
         self.outfile_test = self.outfolder / 'test1.gff'
 
