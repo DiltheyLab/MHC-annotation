@@ -24,8 +24,8 @@ def main(args):
             rc_string = ""
             if strand == "-": rc_string = "--reverse-complement"
             
-            #print(gene_name)
             if cdsStartStat != "cmpl" or cdsEndStat != "cmpl": continue
+            if gene_name == "C4B_2": continue
             samtools_job = subprocess.run(["samtools", "faidx", args.reference, "chr6:"+ txstart + "-" + txend, "--length", "100000000", rc_string ], capture_output=True)
             output = samtools_job.stdout.decode("utf-8")
             #if len(output.split("\n")) > 3:
@@ -47,7 +47,6 @@ def main(args):
             bounds_t = list(zip(exon_starts,exon_ends))
             bounds_rel = [(exstart-txstart, exstop-txstart) for exstart, exstop in bounds_t]
             nbounds = []
-            ctr = 0
             start_found = False
             for b1, b2 in bounds_rel:
                 if not start_found:
@@ -70,15 +69,10 @@ def main(args):
                     else:
                         nbounds.append(b1)
                         nbounds.append(b2)
-                #ctr += 1
-            #nbounds= [x - txstart for x in list(itertools.chain.from_iterable(nbounds))]
-            #nbounds.append(cdsend-txstart)
-            #nbounds.append(bounds[-1:][0])
             for b1, b2 in zip(nbounds[:-1],nbounds[1:]):
                 if b1 > b2:
                     print(f"Problem with {gene_name}: {nbounds}")
                     break
-            
             
             bounds = nbounds
             #bounds = [0] + bounds + [int(txend) - int(txstart)]
@@ -94,7 +88,7 @@ def main(args):
             if segments[1][0:3] != "ATG": print(f"Not a proper start codon for {gene_name}: {segments[0]}")
             if segments[-2][-3:] not in {"TGA", "TAA", "TAG"}: print(f"Not a proper stop codon for {gene_name}: {segments[-2]}")
             full_fasta = "|".join(segments)
-            out.write(">" + gene_name + "_tr1\n")
+            out.write(">" + gene_name.replace("_","-") + "_tr1\n")
             out.write(full_fasta + "\n")
 
             
