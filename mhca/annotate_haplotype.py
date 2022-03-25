@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 import subprocess
 import re
 from importlib import resources
+import gzip
 import mhca.data
 from Bio.SeqIO.FastaIO import SimpleFastaParser
 
@@ -211,6 +212,274 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus
                 #sys.exit()
     return annotated_genes
         
+################################
+######## Refseqgene ############
+################################
+def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
+    rsg_full_transcripts = {}
+    rsg_s2s_nobounds = {}
+    transcripts_per_gene = defaultdict(list)
+    nr_annotated_genes = len(annotated_genes)
+    def fill_rsg_structures(infile):
+        for rec in SimpleFastaParser(infile):
+            gene_tr, seq = rec
+            gene, transcript = gene_tr.split("_")
+            rsg_full_transcripts[gene_tr] = seq
+            rsg_s2s_nobounds[gene_tr] = "".join(seq.split("|")[1:-1])
+            transcripts_per_gene[gene].append(gene_tr)
+
+    if args.refseqgene_full_fasta:
+        with open(args.refseqgene_full_fasta) as inf:
+            fill_rsg_structures(inf)
+    else: 
+        import tarfile 
+        with resources.path(mhca.data, 'rsg_transcripts.tar.gz') as path:
+            with tarfile.open(path) as tar:
+                for x in tar.getmembers():
+                    inf = tar_lines_reader(tar.extractfile(x).readlines())
+                    fill_rsg_structures(inf)
+    #print(transcripts_per_gene)
+    pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
+    if not args.skip_mapping:
+        with tempfile.NamedTemporaryFile(mode="w+") as rsg_input_fasta:
+            for gene_tr, seq in rsg_s2s_nobounds.items():
+                rsg_input_fasta.write(f">{gene_tr}\n")
+                rsg_input_fasta.write(f"{seq}\n")
+            
+            mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rsg_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+    transcript_maps = dict()
+        
+    #for gene, trs in transcripts.items():
+       # print(gene + ": " + str(len(trs)))
+
+    with open(pafout) as rfile:
+        for line in rfile:
+            if line.startswith('#'): continue
+            gene_tr, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
+            if "_" not in gene_tr:
+                print(f"Fatal error: no _ in {gene_tr}")
+                sys.exit(1)
+            gene, transcript = gene_tr.split("_")
+            ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
+            if alen != astop and not ignore_length: continue
+            if astart != "0" and not ignore_length: continue
+            if gene in annotated_genes: continue # if gene is already annotated skip
+            for field in line.split():
+                if field.startswith("NM:"):
+                    score = int(field.lstrip("NM:i"))
+                elif field.startswith("cg:"):
+                    cig = field.lstrip("cg:Z")
+
+            if gene_tr in transcript_maps: 
+                print(f"Found gene again: {gene_tr} ...",end="")
+                if gene in {"C4A", "C4B"}:
+                    mapping = transcript_maps[gene_tr]
+                    print(f"using rule: C4A comes before C4B")
+                    if gene == "C4A":
+                        if mapping.hstart > hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                    elif gene == "C4B":
+                        if mapping.hstart < hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                else:
+                    print(f"skipping.")
+                    continue
+
+            else: transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+
+    gene_maps = dict()
+    for gene_tr,transcript_map in transcript_maps.items():
+        gene, _ = gene_tr.split("_")
+        if gene in manual_corrections and "overlapping" in manual_corrections[gene]: 
+            print(f"{gene} overlapping with other gene, skipping")
+            continue
+        if gene in gene_maps:
+            nhstart = min(transcript_map.hstart, gene_maps[gene][0])
+            nhstop = max(transcript_map.hstop, gene_maps[gene][1])
+            assert transcript_map.strand == gene_maps[gene][2]
+            gene_maps[gene] = (nhstart, nhstop, transcript_map.strand)
+        else:
+            gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
+
+    with open(anno_file,"a") as outf:
+        for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
+            gene_map = gene_maps[gene]
+            geneid = "gene-" + haplotype_sname + "-" + gene 
+            gstart, gstop, gstrand = gene_maps[gene]
+            proper_start = int(gstart)+1
+            annotated_genes.add(gene)
+            nr_annotated_genes = len(annotated_genes)
+        
+            locus_tag="?"
+            if args.locus_tag_prefix:
+                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
+                if gene_tr not in transcript_maps: continue
+                b_gene = transcript_maps[gene_tr]
+                gene, transcript = gene_tr.split("_")
+                geneid = "gene-" + haplotype_sname + "-" + gene 
+                tr = rsg_full_transcripts[gene_tr]
+                pseudo_string = ""
+                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
+                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
+                    continue
+                rnaid = "rna-" + haplotype_sname + "-" + gene_tr
+                transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"
+                protein_id = f"gnl|DiltheyHHU|{locus_tag}.{transcript_nr+1}"
+                outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                    
+                intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
+                positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
+                positions_nr = []
+                frame_pos = 0
+                for nr, pos in enumerate(positions[::2]):
+                    positions_nr.append((pos[0],pos[1],nr,frame_pos))
+                    frame_pos = (frame_pos + 3 - ((pos[1]+1-pos[0]) % 3)) % 3 # seems complicated but isn't ;) 
+                if b_gene.strand == "-": positions_nr = positions_nr[::-1]
+                #positions_sorted = sorted_positions(
+                #print(positions-)
+                for pos in positions_nr:
+                    cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
+                    outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+
+    return annotated_genes
+
+
+############
+#Refseq 38 #
+############
+# at the time of this writing there was only one transcript per gene in this dataset
+#
+def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
+    rs_full_transcripts = {}
+    rs_s2s_nobounds = {}
+    nr_annotated_genes = len(annotated_genes)
+
+    if args.refseq_full_fasta:
+        with open(args.refseq_full_fasta) as inf:
+            for rec in SimpleFastaParser(inf):
+                gene_tr, seq = rec
+                rs_full_transcripts[gene_tr] = seq
+                rs_s2s_nobounds[gene_tr] = "".join(seq.split("|")[1:-1])
+    else: 
+        with resources.path(mhca.data, 'rs38.fasta.gz') as zfile:
+            with gzip.open(zfile,'rt') as inf:
+                for rec in SimpleFastaParser(inf):
+                    gene_tr, seq = rec
+                    rs_full_transcripts[gene_tr] = seq
+                    rs_s2s_nobounds[gene_tr] = "".join(seq.split("|")[1:-1])
+                    
+    pafout = os.path.join(os.path.abspath(args.output_folder), "refseq.paf")
+    if not args.skip_mapping:
+        with tempfile.NamedTemporaryFile(mode="w+") as rs_input_fasta:
+            for gene_tr, seq in rs_s2s_nobounds.items():
+                rs_input_fasta.write(f">{gene_tr}\n")
+                rs_input_fasta.write(f"{seq}\n")
+            
+            mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rs_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
+    transcript_maps = dict()
+        
+    #print(sorted(annotated_genes))
+
+    with open(pafout) as rfile:
+        for line in rfile:
+            if line.startswith('#'): continue
+            gene_tr, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
+            if "_" not in gene_tr:
+                print(f"Fatal error: no _ in {gene_tr}")
+                sys.exit(1)
+            if len(gene_tr.split("_")) > 2 : print(gene_tr)
+            gene, transcript = gene_tr.split("_")
+            ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
+            if alen != astop and not ignore_length: continue
+            if astart != "0" and not ignore_length: continue
+            if gene in annotated_genes: continue # if gene is already annotated from a different data source, then skip
+            for field in line.split():
+                if field.startswith("NM:"):
+                    score = int(field.lstrip("NM:i"))
+                elif field.startswith("cg:"):
+                    cig = field.lstrip("cg:Z")
+
+            if gene_tr in transcript_maps: 
+                print(f"Found gene again: {gene_tr} ...",end="")
+                if gene in {"C4A", "C4B"}:
+                    mapping = transcript_maps[gene_tr]
+                    print(f"using rule: C4A comes before C4B")
+                    if gene == "C4A":
+                        if mapping.hstart > hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                    elif gene == "C4B":
+                        if mapping.hstart < hstart:
+                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+                else:
+                    print(f"skipping.")
+                    continue
+
+            else: transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
+    #print(transcript_maps)
+    #sys.exit()
+
+    # get gene coordinates, which can be ambigious in case of several transcripts
+    gene_maps = dict()
+    for gene_tr,transcript_map in transcript_maps.items():
+        gene, _ = gene_tr.split("_")
+        if gene in manual_corrections and "overlapping" in manual_corrections[gene]: 
+            print(f"{gene} overlapping with other gene, skipping")
+            continue
+        if gene in gene_maps:
+            nhstart = min(transcript_map.hstart, gene_maps[gene][0])
+            nhstop = max(transcript_map.hstop, gene_maps[gene][1])
+            assert transcript_map.strand == gene_maps[gene][2]
+            gene_maps[gene] = (nhstart, nhstop, transcript_map.strand)
+        else:
+            gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
+
+    with open(anno_file,"a") as outf:
+        for gene_tr,transcript_map in transcript_maps.items():
+        #for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
+            gene, transcript = gene_tr.split("_")
+            #gene_map = gene_maps[gene]
+            geneid = "gene-" + haplotype_sname + "-" + gene 
+            gstart, gstop, gstrand = gene_maps[gene]
+            proper_start = int(gstart)+1
+                
+            annotated_genes.add(gene)
+            nr_annotated_genes = len(annotated_genes)
+            locus_tag="?"
+            if args.locus_tag_prefix:
+                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            #for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
+            #    if gene_tr not in transcript_maps: continue
+            b_gene = transcript_maps[gene_tr]
+            gene, transcript = gene_tr.split("_")
+            geneid = "gene-" + haplotype_sname + "-" + gene 
+            tr = rs_full_transcripts[gene_tr]
+            pseudo_string = ""
+            if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
+                print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
+                continue
+            rnaid = "rna-" + haplotype_sname + "-" + gene_tr
+            transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
+            protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
+            outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                
+            intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
+            positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
+            positions_nr = []
+            frame_pos = 0
+            for nr, pos in enumerate(positions[::2]):
+                positions_nr.append((pos[0],pos[1],nr,frame_pos))
+                frame_pos = (frame_pos + 3 - ((pos[1]+1-pos[0]) % 3)) % 3 # seems complicated but isn't ;) 
+            if b_gene.strand == "-": positions_nr = positions_nr[::-1]
+            #positions_sorted = sorted_positions(
+            #print(positions-)
+            for pos in positions_nr:
+                cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
+                outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+
+    return annotated_genes
 
 def main(args):
     """ Main function to annotate haplotype """
@@ -267,146 +536,20 @@ def main(args):
     annotated_genes = set()
     allele_map = namedtuple('Allele_mapping', ['edit_dist', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
 
+    print("########## IMGT ##########")
     annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
+    print(f"Number of genes: {len(annotated_genes)}")
+    
 
+    print("########## RSG ###########")
     annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+    print(f"Number of genes: {len(annotated_genes)}")
+
+    print("########## RS ###########")
+    annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+    print(f"Number of genes: {len(annotated_genes)}")
         
 
-################################
-######## Refseqgene ############
-################################
-def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
-    rsg_full_transcripts = {}
-    rsg_s2s_nobounds = {}
-    transcripts_per_gene = defaultdict(list)
-    nr_annotated_genes = len(annotated_genes)
-    def fill_rsg_structures(infile):
-        for rec in SimpleFastaParser(infile):
-            gene_tr, seq = rec
-            gene, transcript = gene_tr.split("_")
-            rsg_full_transcripts[gene_tr] = seq
-            rsg_s2s_nobounds[gene_tr] = "".join(seq.split("|")[1:-1])
-            transcripts_per_gene[gene].append(gene_tr)
-
-    if args.refseqgene_full_fasta:
-        with open(args.refseqgene_full_fasta) as inf:
-            fill_rsg_structures(inf)
-    else: 
-        import tarfile 
-        with resources.path(mhca.data, 'rsg_transcripts.tar.gz') as path:
-            with tarfile.open(path) as tar:
-                for x in tar.getmembers():
-                    inf = tar_lines_reader(tar.extractfile(x).readlines())
-                    fill_rsg_structures(inf)
-    #print(transcripts_per_gene)
-    pafout = os.path.join(os.path.abspath(args.output_folder), "refseqgene.paf")
-    if not args.skip_mapping:
-        with tempfile.NamedTemporaryFile(mode="w+") as rsg_input_fasta:
-            for gene_tr, seq in rsg_s2s_nobounds.items():
-                rsg_input_fasta.write(f">{gene_tr}\n")
-                rsg_input_fasta.write(f"{seq}\n")
-            
-            mm2job = subprocess.run(["minimap2", os.path.abspath(args.haplotype), rsg_input_fasta.name, "-o", pafout, "-x", "asm10","-c", "--end-bonus",str(endbonus)], capture_output=True, check=True)
-    transcript_maps = dict()
-    gene_maps = dict()
-        
-    #for gene, trs in transcripts.items():
-       # print(gene + ": " + str(len(trs)))
-
-    with open(pafout) as rfile:
-        for line in rfile:
-            if line.startswith('#'): continue
-            gene_tr, alen, astart, astop, strand, _, _, hstart, hstop = line.split()[0:9]
-            if "_" not in gene_tr:
-                print(f"Fatal error: no _ in {gene_tr}")
-                sys.exit(1)
-            gene, transcript = gene_tr.split("_")
-            ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
-            if alen != astop and not ignore_length: continue
-            if astart != "0" and not ignore_length: continue
-            if gene in annotated_genes: continue # if gene is already annotated skip
-            for field in line.split():
-                if field.startswith("NM:"):
-                    score = int(field.lstrip("NM:i"))
-                elif field.startswith("cg:"):
-                    cig = field.lstrip("cg:Z")
-
-            if gene_tr in transcript_maps: 
-                print(f"Found gene again: {gene_tr} ...",end="")
-                if gene in {"C4A", "C4B"}:
-                    mapping = transcript_maps[gene_tr]
-                    print(f"using rule: C4A comes before C4B")
-                    if gene == "C4A":
-                        if mapping.hstart > hstart:
-                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
-                    elif gene == "C4B":
-                        if mapping.hstart < hstart:
-                            transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
-                else:
-                    print(f"skipping.")
-                    continue
-
-            else: transcript_maps[gene_tr] = allele_map(score, cig, astart, alen, astop,strand, hstart, hstop)
-
-    for gene_tr,transcript_map in transcript_maps.items():
-        gene, _ = gene_tr.split("_")
-        if gene in manual_corrections and "overlapping" in manual_corrections[gene]: 
-            print(f"{gene} overlapping with other gene, skipping")
-            continue
-        if gene in gene_maps:
-            nhstart = min(transcript_map.hstart, gene_maps[gene][0])
-            nhstop = max(transcript_map.hstop, gene_maps[gene][1])
-            assert transcript_map.strand == gene_maps[gene][2]
-            gene_maps[gene] = (nhstart, nhstop, transcript_map.strand)
-        else:
-            gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
-
-    with open(anno_file,"a") as outf:
-        for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
-            gene_map = gene_maps[gene]
-            geneid = "gene-" + haplotype_sname + "-" + gene 
-            gstart, gstop, gstrand = gene_maps[gene]
-            proper_start = int(gstart)+1
-            nr_annotated_genes += 1
-            locus_tag="?"
-            if args.locus_tag_prefix:
-                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
-            outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
-            for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
-                if gene_tr not in transcript_maps: continue
-                b_gene = transcript_maps[gene_tr]
-                gene, transcript = gene_tr.split("_")
-                geneid = "gene-" + haplotype_sname + "-" + gene 
-                tr = rsg_full_transcripts[gene_tr]
-                pseudo_string = ""
-                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
-                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
-                    continue
-                rnaid = "rna-" + haplotype_sname + "-" + gene_tr
-                transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.{transcript_nr+1}"
-                protein_id = f"gnl|DiltheyHHU|{locus_tag}.{transcript_nr+1}"
-                outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "mRNA", str(proper_start), b_gene.hstop, ".", b_gene.strand, ".", f"ID={rnaid};Parent={geneid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
-                    
-                intervals = parse_cigar(b_gene.cigar, b_gene.strand, tr, int(b_gene.hstart))
-                positions = intervals2positions(intervals, b_gene.strand, proper_start, int(b_gene.hstop))
-                positions_nr = []
-                frame_pos = 0
-                for nr, pos in enumerate(positions[::2]):
-                    positions_nr.append((pos[0],pos[1],nr,frame_pos))
-                    frame_pos = (frame_pos + 3 - ((pos[1]+1-pos[0]) % 3)) % 3 # seems complicated but isn't ;) 
-                if b_gene.strand == "-": positions_nr = positions_nr[::-1]
-                #positions_sorted = sorted_positions(
-                #print(positions-)
-                for pos in positions_nr:
-                    cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
-                    outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
-
-    return annotated_genes
-
-
-    ############
-    #Refseq 38 #
-    ############
     
     
     
