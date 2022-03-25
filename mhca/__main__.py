@@ -8,6 +8,10 @@ def main():
 
     anno_parser = subparsers.add_parser("annotate")
     anno_parser.add_argument("haplotype", help="Input Haplotype in fasta format.")
+    anno_parser.add_argument("--skip_imgt", default=False, action="store_true", help="Use this if you don't want to use IMGT as a data source.")
+    anno_parser.add_argument("--skip_rsg", default=False, action="store_true", help="Use this if you don't want to use RefSeqGene as a data source.")
+    anno_parser.add_argument("--skip_rs", default=False, action="store_true", help="Use this if you don't want to use RefSeq as a data source.")
+    
     anno_parser.add_argument("--skip_mapping", default=False, action="store_true", help="If you already have used minimap2 and want to skip this step.")
     anno_parser.add_argument("--locus_tag_prefix", help="Comma separated file containing the locus_tag_prefix for the haplotype")
     anno_parser.add_argument("--manual_corrections", help="Comma separated file with manual corrections")

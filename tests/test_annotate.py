@@ -30,13 +30,17 @@ class TestAnnotate(unittest.TestCase):
         result = annotate_haplotype.parse_cigar("3M2D10M", "+", "AA|CCGGTT|AACCGG|TTAACCGG|TT", 3)
         self.assertEqual(result, [(0, 7), (8, 13)])
 
-    def test_total(self):
+    def test_without_rs(self):
         args = Namespace(   haplotype = str(self.fastapath), \
                             manual_corrections = None, \
                             locus_tag_prefix = None, \
                             imgt_folder = None, \
                             output_folder = self.outfolder, \
                             skip_mapping = False, \
+                            skip_imgt = False, \
+                            skip_rsg = False, \
+                            skip_rs = True, \
+                            refseq_full_fasta = None, \
                             refseqgene_full_fasta = None)
         annotate_haplotype.main(args)
         self.assertTrue(self.outfile_test.is_file())

@@ -536,18 +536,20 @@ def main(args):
     annotated_genes = set()
     allele_map = namedtuple('Allele_mapping', ['edit_dist', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
 
-    print("########## IMGT ##########")
-    annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
-    print(f"Number of genes: {len(annotated_genes)}")
-    
+    if not args.skip_imgt:
+        print("########## IMGT ##########")
+        annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
+        print(f"Number of genes: {len(annotated_genes)}")
 
-    print("########## RSG ###########")
-    annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
-    print(f"Number of genes: {len(annotated_genes)}")
+    if not args.skip_rsg:
+        print("########## RSG ###########")
+        annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+        print(f"Number of genes: {len(annotated_genes)}")
 
-    print("########## RS ###########")
-    annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
-    print(f"Number of genes: {len(annotated_genes)}")
+    if not args.skip_rs:
+        print("########## RS ###########")
+        annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+        print(f"Number of genes: {len(annotated_genes)}")
         
 
     
