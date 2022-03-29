@@ -7,12 +7,19 @@ from BCBio import GFF
 def main(args):
     with open(args.haplotype) as inf:
         ref_dict = SeqIO.to_dict(SeqIO.parse(inf, "fasta"))
+    genes = set()
+    pseudogenes = set()
+    transcripts = set()
     with open(args.annotation_gff) as inf:
         for rec in GFF.parse(inf, base_dict=ref_dict):
             for gene in rec.features:
+                if gene.type == "pseudogene":
+                    pseudogenes.add(gene.id)
                 if gene.type == "gene":
+                    genes.add(gene.id)
+                
                     for rna in gene.sub_features:
-                        
+                        transcripts.add(rna.id)
                         if rna.type == "mRNA":
                             strand = rna.strand
                             seq_exons = Seq("")
@@ -49,6 +56,7 @@ def main(args):
                             #for cds in rna.sub_features:
                                 #print(cds)
                             #    pass
+    print(f"Checked {len(genes)} genes, {len(pseudogenes)} pseudogenes and {len(transcripts)} transcripts")
 
 if __name__ == "__main__":
     #print(sys.argv[1:])
