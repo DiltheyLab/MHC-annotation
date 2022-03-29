@@ -87,7 +87,7 @@ def tar_lines_reader(lines_from_tar):
 ################################
 ######## IMGT ##################
 ################################
-def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus, gene_type, manual_corrections, annotated_genes, anno_file):
+def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_tag_prefix, endbonus, gene_type, manual_corrections, annotated_genes, anno_file):
     full_allele_bounds = defaultdict(dict)
     s2s_allele_bounds = defaultdict(dict)
     s2s_allele_nobounds = defaultdict(dict)
@@ -116,7 +116,6 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus
                         full_allele_bounds[gene][idx] = seq
                         s2s_allele_bounds[gene][idx] = "|".join(seq.split("|")[1:-1])
                         s2s_allele_nobounds[gene][idx] = "".join(seq.split("|")[1:-1])
-
 
 
         
@@ -179,15 +178,15 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus
             nr_annotated_genes = len(annotated_genes)
 
             locus_tag="?"
-            if args.locus_tag_prefix:
-                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            if locus_tag_prefix:
+                locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             if gene in gene_type and gene_type[gene] == "pseudogene":
                 outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
             else:
                 gene_tr = gene + "_tr1"
                 pseudo_string = ""
-                if gene_tr in manual_corrections and "early_stop" in manual_corrections[gene_tr]:
-                    print(f"{gene_tr}: early stop in CDS. Skipping...")
+                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop", "no_splice_acceptor", "short_exon"}:
+                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
                     continue
                     #print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
                     #pseudo_string = ";pseudo=true"
@@ -215,7 +214,7 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, endbonus
 ################################
 ######## Refseqgene ############
 ################################
-def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
+def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file):
     rsg_full_transcripts = {}
     rsg_s2s_nobounds = {}
     transcripts_per_gene = defaultdict(list)
@@ -260,6 +259,10 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, man
                 print(f"Fatal error: no _ in {gene_tr}")
                 sys.exit(1)
             gene, transcript = gene_tr.split("_")
+            if gene in manual_corrections: 
+                if manual_corrections[gene] == "not_found": 
+                    print(f"{gene} will not be considered due to manual corrections \"{manual_corrections[gene]}\". Skipping...")
+                    continue
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
             if alen != astop and not ignore_length: continue
             if astart != "0" and not ignore_length: continue
@@ -290,9 +293,6 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, man
     gene_maps = dict()
     for gene_tr,transcript_map in transcript_maps.items():
         gene, _ = gene_tr.split("_")
-        if gene in manual_corrections and "overlapping" in manual_corrections[gene]: 
-            print(f"{gene} overlapping with other gene, skipping")
-            continue
         if gene in gene_maps:
             nhstart = min(transcript_map.hstart, gene_maps[gene][0])
             nhstop = max(transcript_map.hstop, gene_maps[gene][1])
@@ -311,8 +311,8 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, man
             nr_annotated_genes = len(annotated_genes)
         
             locus_tag="?"
-            if args.locus_tag_prefix:
-                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            if locus_tag_prefix:
+                locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
             for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
                 if gene_tr not in transcript_maps: continue
@@ -321,7 +321,7 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, man
                 geneid = "gene-" + haplotype_sname + "-" + gene 
                 tr = rsg_full_transcripts[gene_tr]
                 pseudo_string = ""
-                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
+                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop", "no_splice_acceptor", "short_exon"}:
                     print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
                     continue
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
@@ -351,7 +351,7 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, man
 ############
 # at the time of this writing there was only one transcript per gene in this dataset
 #
-def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes, endbonus, anno_file):
+def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file):
     rs_full_transcripts = {}
     rs_s2s_nobounds = {}
     nr_annotated_genes = len(annotated_genes)
@@ -391,6 +391,10 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_
                 sys.exit(1)
             if len(gene_tr.split("_")) > 2 : print(gene_tr)
             gene, transcript = gene_tr.split("_")
+            if gene in manual_corrections: 
+                if manual_corrections[gene] == "not_found": 
+                    print(f"{gene} will not be considered due to manual corrections \"{manual_corrections[gene]}\". Skipping...")
+                    continue
             ignore_length = True if gene in manual_corrections and "not_full_length" in manual_corrections[gene] else False
             if alen != astop and not ignore_length: continue
             if astart != "0" and not ignore_length: continue
@@ -447,8 +451,8 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_
             annotated_genes.add(gene)
             nr_annotated_genes = len(annotated_genes)
             locus_tag="?"
-            if args.locus_tag_prefix:
-                locus_tag = locus_tag_prefix[haplotype_sname] + f"_{nr_annotated_genes:0>4d}"
+            if locus_tag_prefix:
+                locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
             #for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
             #    if gene_tr not in transcript_maps: continue
@@ -457,7 +461,7 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_
             geneid = "gene-" + haplotype_sname + "-" + gene 
             tr = rs_full_transcripts[gene_tr]
             pseudo_string = ""
-            if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop"}:
+            if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop", "no_splice_acceptor", "short_exon"}:
                 print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
                 continue
             rnaid = "rna-" + haplotype_sname + "-" + gene_tr
@@ -528,27 +532,29 @@ def main(args):
     with open(anno_file, "w") as outf:
         write_header(outf, haplotype_name, len(haplotype_seq))
 
+    ltg = None
     if args.locus_tag_prefix:
         if haplotype_sname not in locus_tag_prefix:
             print(f"{haplotype_sname} not found in locus_tag_prefix. Exiting!")
             sys.exit(2)
+        else: ltg = locus_tag_prefix[haplotype_sname]
     endbonus = 0
     annotated_genes = set()
     allele_map = namedtuple('Allele_mapping', ['edit_dist', 'cigar', 'astart', 'alen','astop','strand','hstart','hstop' ])
 
     if not args.skip_imgt:
         print("########## IMGT ##########")
-        annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
+        annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
         print(f"Number of genes: {len(annotated_genes)}")
 
     if not args.skip_rsg:
         print("########## RSG ###########")
-        annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+        annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file)
         print(f"Number of genes: {len(annotated_genes)}")
 
     if not args.skip_rs:
         print("########## RS ###########")
-        annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, manual_corrections, annotated_genes,endbonus, anno_file)
+        annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file)
         print(f"Number of genes: {len(annotated_genes)}")
         
 
