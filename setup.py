@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='MHC-Annotation',
-    version='0.0.6',
+    version='0.0.8',
     license='MIT',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
