@@ -1,4 +1,4 @@
-from mhca import annotate_haplotype, check_CDS, refseq2fullfasta
+from mhca import annotate_haplotype, check_CDS, refseq2fullfasta, update_feature_table
 from sys import argv, exit
 from argparse import ArgumentParser
 
@@ -29,6 +29,9 @@ def main():
     refseq_parser.add_argument("refseq_genes", help="Refseq tab-separated file")
     refseq_parser.add_argument("outfile", help="Output fasta file.")
 
+    update_feature_parser = subparsers.add_parser("update_feature_table")
+    update_feature_parser.add_argument("old_feature_table", help="Feature table file.")
+    update_feature_parser.add_argument("new_feature_table", help="Output feature table file.")
 
     args = parser.parse_args()
     if args.subparser_name == "annotate":
@@ -37,5 +40,7 @@ def main():
         return check_CDS.main( args )
     elif args.subparser_name == "refseq2fullfasta":
         return refseq2fullfasta.main( args )
+    elif args.subparser_name == "update_feature_table":
+        return update_feature_table.main( args )
     else:
         parser.print_help()

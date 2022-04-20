@@ -17,6 +17,17 @@ def write_header(fileh, name, length):
     fileh.write("##gff-version 3.1.26\n")
     fileh.write(f"##sequence-region {name} 1 {length}\n")
 
+def get_tbl_formated_coordinate_strings(c1,c2,strand):
+    if strand == "+":
+        first_coord = c1
+        second_coord = c2
+    else:
+        first_coord = c2
+        second_coord = c1
+    f1 = (1 + (len(str(first_coord)) // 8)) * 8 
+    f2 = (1 + (len(str(second_coord)) // 8)) * 8
+    return f"{first_coord:<{f1}}", f"{second_coord:<{f2}}"
+
 def parse_cigar(cigar, strand, sequence, offset):
     """ Parses cigar string and finds intervals in sequence with boundary information """
     operations_t = re.findall(r"\d+\D", cigar)
@@ -87,7 +98,7 @@ def tar_lines_reader(lines_from_tar):
 ################################
 ######## IMGT ##################
 ################################
-def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_tag_prefix, endbonus, gene_type, manual_corrections, annotated_genes, anno_file):
+def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_tag_prefix, endbonus, gene_type, manual_corrections, annotated_genes, anno_file, anno_file_tbl):
     full_allele_bounds = defaultdict(dict)
     s2s_allele_bounds = defaultdict(dict)
     s2s_allele_nobounds = defaultdict(dict)
@@ -171,7 +182,7 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_ta
             outf.write(gene + "\t" + best + "\t" + str(allele_maps[best])+ "\n")
 
         best_allele = allele_maps[best]
-        with open(anno_file,"a") as outf:
+        with open(anno_file,"a") as outf, open(anno_file_tbl,"a") as outf_tbl:
             geneid = "gene-" + haplotype_sname + "-" + gene 
             proper_start = int(best_allele.hstart)+1
             annotated_genes.add(gene)
@@ -182,6 +193,11 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_ta
                 locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             if gene in gene_type and gene_type[gene] == "pseudogene":
                 outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "pseudogene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag};pseudogene=unknown"]) + "\n")
+                s1, s2 = get_tbl_formated_coordinate_strings(proper_start,best_allele.hstop, best_allele.strand)
+                outf_tbl.write(f"{s1}{s2}gene\n")
+                outf_tbl.write(f"{' '*24}gene    {gene}\n")
+                outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
+                outf_tbl.write(f"{' '*24}pseudogene      unknown\n")
             else:
                 gene_tr = gene + "_tr1"
                 pseudo_string = ""
@@ -192,6 +208,11 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_ta
                     #pseudo_string = ";pseudo=true"
 
                 outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "gene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
+                s1, s2 = get_tbl_formated_coordinate_strings(proper_start,best_allele.hstop, best_allele.strand)
+                outf_tbl.write(f"{s1}{s2}gene\n")
+                outf_tbl.write(f"{' '*24}gene    {gene}\n")
+                outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
+
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
                 protein_id = f"gnl|DiltheyHHU|{locus_tag}.1"
@@ -205,16 +226,29 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_ta
                     positions_nr.append((pos[0],pos[1],nr,frame_pos))
                     frame_pos = (frame_pos + 3 - ((pos[1]+1-pos[0]) % 3)) % 3 # seems complicated but isn't ;) 
                 if best_allele.strand == "-": positions_nr = positions_nr[::-1]
-                for pos in positions_nr:
+                for pidx, pos in enumerate(positions_nr):
                     cdsid = "cds-" + haplotype_sname + "-" + gene + "_tr1" + "-" + str(pos[2]+1)
                     outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "CDS",str(pos[0]),str(pos[1]), ".", best_allele.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};product={gene}{pseudo_string}"]) + "\n")
+                    s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], best_allele.strand)
+                    if pidx == 0: outf_tbl.write(f"{s1}{s2}mRNA\n")
+                    else: outf_tbl.write(f"{s1}{s2}\n")
+                        
                 #sys.exit()
+                outf_tbl.write(f"{' '*24}product {gene}\n")
+                outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
+                for pidx, pos in enumerate(positions_nr):
+                    s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], best_allele.strand)
+                    if pidx == 0: outf_tbl.write(f"{s1}{s2}CDS\n")
+                    else: outf_tbl.write(f"{s1}{s2}\n")
+                outf_tbl.write(f"{' '*24}product {gene}\n")
+                outf_tbl.write(f"{' '*24}transl_table    1\n")
+                outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
     return annotated_genes
         
 ################################
 ######## Refseqgene ############
 ################################
-def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file):
+def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file, anno_file_tbl):
     rsg_full_transcripts = {}
     rsg_s2s_nobounds = {}
     transcripts_per_gene = defaultdict(list)
@@ -301,7 +335,7 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, loc
         else:
             gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
 
-    with open(anno_file,"a") as outf:
+    with open(anno_file,"a") as outf, open(anno_file_tbl,"a") as outf_tbl:
         for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
             gene_map = gene_maps[gene]
             geneid = "gene-" + haplotype_sname + "-" + gene 
@@ -314,6 +348,10 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, loc
             if locus_tag_prefix:
                 locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            s1, s2 = get_tbl_formated_coordinate_strings(proper_start,gstop, gstrand)
+            outf_tbl.write(f"{s1}{s2}gene\n")
+            outf_tbl.write(f"{' '*24}gene    {gene}\n")
+            outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
             for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
                 if gene_tr not in transcript_maps: continue
                 b_gene = transcript_maps[gene_tr]
@@ -339,9 +377,21 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, loc
                 if b_gene.strand == "-": positions_nr = positions_nr[::-1]
                 #positions_sorted = sorted_positions(
                 #print(positions-)
-                for pos in positions_nr:
+                for pidx,pos in enumerate(positions_nr):
                     cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
                     outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeqGene", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                    s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], b_gene.strand)
+                    if pidx == 0: outf_tbl.write(f"{s1}{s2}mRNA\n")
+                    else: outf_tbl.write(f"{s1}{s2}\n")
+                outf_tbl.write(f"{' '*24}product {gene}\n")
+                outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
+                for pidx, pos in enumerate(positions_nr):
+                    s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], b_gene.strand)
+                    if pidx == 0: outf_tbl.write(f"{s1}{s2}CDS\n")
+                    else: outf_tbl.write(f"{s1}{s2}\n")
+                outf_tbl.write(f"{' '*24}product {gene}\n")
+                outf_tbl.write(f"{' '*24}transl_table    1\n")
+                outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
 
     return annotated_genes
 
@@ -351,7 +401,7 @@ def refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, loc
 ############
 # at the time of this writing there was only one transcript per gene in this dataset
 #
-def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file):
+def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_tag_prefix, manual_corrections, annotated_genes, endbonus, anno_file, anno_file_tbl):
     rs_full_transcripts = {}
     rs_s2s_nobounds = {}
     nr_annotated_genes = len(annotated_genes)
@@ -439,7 +489,7 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_t
         else:
             gene_maps[gene] = (transcript_map.hstart, transcript_map.hstop, transcript_map.strand)
 
-    with open(anno_file,"a") as outf:
+    with open(anno_file,"a") as outf, open(anno_file_tbl,"a") as outf_tbl:
         for gene_tr,transcript_map in transcript_maps.items():
         #for gene in sorted(gene_maps.keys(), key = lambda x: gene_maps[x][0]):
             gene, transcript = gene_tr.split("_")
@@ -454,6 +504,10 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_t
             if locus_tag_prefix:
                 locus_tag = locus_tag_prefix + f"_{nr_annotated_genes:0>4d}"
             outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "gene", str(proper_start), gstop, ".", gstrand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}"]) + "\n")
+            s1, s2 = get_tbl_formated_coordinate_strings(proper_start,gstop, gstrand)
+            outf_tbl.write(f"{s1}{s2}gene\n")
+            outf_tbl.write(f"{' '*24}gene    {gene}\n")
+            outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
             #for transcript_nr, gene_tr in enumerate(transcripts_per_gene[gene]):
             #    if gene_tr not in transcript_maps: continue
             b_gene = transcript_maps[gene_tr]
@@ -479,9 +533,21 @@ def refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, locus_t
             if b_gene.strand == "-": positions_nr = positions_nr[::-1]
             #positions_sorted = sorted_positions(
             #print(positions-)
-            for pos in positions_nr:
+            for pidx, pos in enumerate(positions_nr):
                 cdsid = "cds-" + haplotype_sname + "-" + gene_tr + "-" + str(pos[2]+1)
                 outf.write("\t".join([haplotype_name, "mhc_annotate_RefSeq", "CDS",str(pos[0]),str(pos[1]), ".", b_gene.strand, str(pos[3]), f"ID={cdsid};Parent={rnaid};protein_id={protein_id};transcript_id={transcript_id};product={gene}{pseudo_string}"]) + "\n")
+                s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], b_gene.strand)
+                if pidx == 0: outf_tbl.write(f"{s1}{s2}mRNA\n")
+                else: outf_tbl.write(f"{s1}{s2}\n")
+            outf_tbl.write(f"{' '*24}product {gene}\n")
+            outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
+            for pidx, pos in enumerate(positions_nr):
+                s1, s2 = get_tbl_formated_coordinate_strings(pos[0], pos[1], b_gene.strand)
+                if pidx == 0: outf_tbl.write(f"{s1}{s2}CDS\n")
+                else: outf_tbl.write(f"{s1}{s2}\n")
+            outf_tbl.write(f"{' '*24}product {gene}\n")
+            outf_tbl.write(f"{' '*24}transl_table    1\n")
+            outf_tbl.write(f"{' '*24}transcript_id   {transcript_id}\n")
 
     return annotated_genes
 
@@ -531,6 +597,9 @@ def main(args):
     anno_file = os.path.join(out_folder, haplotype_name + ".gff")
     with open(anno_file, "w") as outf:
         write_header(outf, haplotype_name, len(haplotype_seq))
+    anno_file_tbl = os.path.join(out_folder, haplotype_name + ".tbl")
+    with open(anno_file_tbl, "w") as outf_tbl:
+        outf_tbl.write("")
 
     ltg = None
     if args.locus_tag_prefix:
@@ -544,17 +613,17 @@ def main(args):
 
     if not args.skip_imgt:
         print("########## IMGT ##########")
-        annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file)
+        annotated_genes = imgt_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, endbonus,  gene_type, manual_corrections, annotated_genes, anno_file, anno_file_tbl)
         print(f"Number of genes: {len(annotated_genes)}")
 
     if not args.skip_rsg:
         print("########## RSG ###########")
-        annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file)
+        annotated_genes = refseqgene_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file, anno_file_tbl)
         print(f"Number of genes: {len(annotated_genes)}")
 
     if not args.skip_rs:
         print("########## RS ###########")
-        annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file)
+        annotated_genes = refseq_annotation(args, allele_map, haplotype_name, haplotype_sname, ltg, manual_corrections, annotated_genes,endbonus, anno_file, anno_file_tbl)
         print(f"Number of genes: {len(annotated_genes)}")
         
 
