@@ -577,7 +577,7 @@ def main(args):
         with open(args.manual_corrections) as inf:
             for line in inf:
                 if line.startswith("#"): continue
-                gene, wti = line.rstrip().split(",")
+                gene, wti = line.rstrip().split(",")[0:2]
                 if gene in manual_corrections: 
                     print(f"Double entry for gene {gene} in manual_corrections file. Please check!")
                     sys.exit(1)
