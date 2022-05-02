@@ -199,19 +199,19 @@ def imgt_annotation(args, allele_map,  haplotype_name, haplotype_sname, locus_ta
                 outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
                 outf_tbl.write(f"{' '*24}pseudogene      unknown\n")
             else:
-                gene_tr = gene + "_tr1"
                 pseudo_string = ""
-                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop", "no_splice_acceptor", "short_exon"}:
-                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
-                    continue
-                    #print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
-                    #pseudo_string = ";pseudo=true"
-
                 outf.write("\t".join([haplotype_name, "mhc_annotate_IMGT", "gene", str(proper_start), best_allele.hstop, ".", best_allele.strand, ".", f"ID={geneid};gene={gene};locus_tag={locus_tag}{pseudo_string}"]) + "\n")
                 s1, s2 = get_tbl_formated_coordinate_strings(proper_start,best_allele.hstop, best_allele.strand)
                 outf_tbl.write(f"{s1}{s2}gene\n")
                 outf_tbl.write(f"{' '*24}gene    {gene}\n")
                 outf_tbl.write(f"{' '*24}locus_tag       {locus_tag}\n")
+
+                gene_tr = gene + "_tr1"
+                if gene_tr in manual_corrections and manual_corrections[gene_tr] in {"early_stop", "no_stop", "no_splice_acceptor", "short_exon"}:
+                    print(f"{gene_tr}: {manual_corrections[gene_tr]} in CDS. Skipping...")
+                    continue
+                    #print(f"{gene_tr}: early stop in CDS. Set to \"pseudo=true\"")
+                    #pseudo_string = ";pseudo=true"
 
                 rnaid = "rna-" + haplotype_sname + "-" + gene_tr
                 transcript_id = f"gnl|DiltheyHHU|mRNA.{locus_tag}.1"
