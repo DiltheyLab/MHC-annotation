@@ -30,8 +30,10 @@ def main():
     refseq_parser.add_argument("outfile", help="Output fasta file.")
 
     update_feature_parser = subparsers.add_parser("update_feature_table")
-    update_feature_parser.add_argument("old_feature_table", help="Feature table file.")
-    update_feature_parser.add_argument("new_feature_table", help="Output feature table file.")
+    update_feature_parser.add_argument("old_feature_table", help="Old feature table file.")
+    update_feature_parser.add_argument("record_id", help="ID of record that will be updated")
+    update_feature_parser.add_argument("update_feature_table", help="Feature table file with new features.")
+    update_feature_parser.add_argument("new_feature_table", help="New updated feature table file.")
 
     args = parser.parse_args()
     if args.subparser_name == "annotate":
