@@ -25,7 +25,7 @@ def main(args):
             if strand == "-": rc_string = "--reverse-complement"
             
             if cdsStartStat != "cmpl" or cdsEndStat != "cmpl": continue
-            if gene_name == "C4B_2": continue
+            #if gene_name == "C4B_2": continue
             samtools_job = subprocess.run(["samtools", "faidx", args.reference, "chr6:"+ txstart + "-" + txend, "--length", "100000000", rc_string ], capture_output=True)
             output = samtools_job.stdout.decode("utf-8")
             #if len(output.split("\n")) > 3:
